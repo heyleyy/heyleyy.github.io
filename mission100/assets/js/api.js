@@ -4,16 +4,20 @@ import { settings, db, isLive } from './state.js';
 
 export class ApiError extends Error {}
 
-async function call(path, { method = 'GET', body, query } = {}) {
+async function call(path, { method = 'GET', body, query, base } = {}) {
   const s = settings();
   if (!isLive()) throw new ApiError('Not connected. Open Settings & APIs and enter the Worker URL and team token.');
   const qs = query ? '?' + new URLSearchParams(Object.entries(query).filter(([, v]) => v !== '' && v != null)) : '';
+  const url = (base || s.workerUrl).replace(/\/$/, '');
   let r;
   try {
-    r = await fetch(s.workerUrl.replace(/\/$/, '') + path + qs, {
+    r = await fetch(url + path + qs, {
       method, headers: { 'Content-Type': 'application/json', 'X-Team-Token': s.teamToken }, body: body ? JSON.stringify(body) : undefined,
     });
-  } catch (e) { throw new ApiError(`Cannot reach the Worker (${e.message}). Check the URL and ALLOWED_ORIGINS.`); }
+  } catch (e) {
+    if (base) throw new ApiError(`Cannot reach the Coupang PC Worker at ${url}. On the PC whose IP is registered in WING, run start-coupang.cmd and keep the window open.`);
+    throw new ApiError(`Cannot reach the Worker (${e.message}). Check the URL and ALLOWED_ORIGINS.`);
+  }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new ApiError(j.error || `HTTP ${r.status}`); e.status = r.status; e.detail = j.detail; throw e; }
   return j;
@@ -58,7 +62,10 @@ function parseJSON(t) {
 export const geminiImage = ({ prompt, images = [], model }) => call('/gemini/image', { method: 'POST', body: { prompt, images, model } });
 
 // ---------- Coupang WING ----------
-const cp = (method, path, { query, body, write = false } = {}) => call('/coupang', { method: 'POST', body: { method, path, query, body, write } });
+// Coupang only accepts calls from IPs registered in WING, and Cloudflare's IPs change,
+// so Coupang calls go to the Worker running on the registered PC (settings.coupangUrl).
+const cp = (method, path, { query, body, write = false } = {}) => call('/coupang', { method: 'POST', body: { method, path, query, body, write }, base: settings().coupangUrl || undefined });
+export const coupangHealth = () => call('/health', { base: settings().coupangUrl || undefined });
 export const coupang = {
   /** Registered products (paged by nextToken). */
   products: (nextToken = '') => cp('GET', '/v2/providers/seller_api/apis/api/v1/marketplace/seller-products', { query: { vendorId: '{vendorId}', maxPerPage: 50, nextToken } }),

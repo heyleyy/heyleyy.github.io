@@ -1,13 +1,13 @@
 import { settings, rules, db, DEFAULT_RULES, exportAll, importAll, clearData, audit } from '../state.js';
 import { card, field, inp, sw, sel, table, badge, icon, toast, busy, $, $$, esc, download, readFile, modal, ago } from '../ui.js';
-import { health } from '../api.js';
+import { health, coupangHealth } from '../api.js';
 import { loadDemo } from '../demo.js';
 import { rerender } from '../app.js';
 
 const SERVICES = [
   ['claude', 'Claude via POSTECH GenAI', 'Copilot, weekly judgment, copywriting', 'POSTECH_API_KEYS (or ANTHROPIC_API_KEY)'],
   ['gemini', 'Gemini image', 'Ad images from product photos', 'GEMINI_API_KEY'],
-  ['coupang', 'Coupang WING Open API', 'Products, prices, orders, tracking', 'COUPANG_ACCESS_KEY · COUPANG_SECRET_KEY · COUPANG_VENDOR_ID'],
+  ['coupang', 'Coupang WING Open API', 'Products, prices, orders, tracking · via the PC Worker (registered IP)','COUPANG_ACCESS_KEY · COUPANG_SECRET_KEY · COUPANG_VENDOR_ID'],
   ['naverAds', 'Naver Search Ad', 'Keyword volume and competition', 'NAVER_AD_API_KEY · NAVER_AD_SECRET · NAVER_AD_CUSTOMER_ID'],
   ['naverOpen', 'Naver Open API', 'Shopping prices, DataLab trends', 'NAVER_CLIENT_ID · NAVER_CLIENT_SECRET'],
   ['domeggook', '도매꾹 / 도매매', 'Supplier products and stock', 'DOMEGGOOK_API_KEY'],
@@ -51,6 +51,7 @@ export default {
         <div class="stack">
           ${field('Worker URL', inp('workerUrl', s.workerUrl, 'placeholder="https://mission100-proxy.<you>.workers.dev"'))}
           ${field('Team token', inp('teamToken', s.teamToken, 'type="password" placeholder="same value as TEAM_TOKEN on the Worker"'), 'Saved only in this browser. Never put it in the GitHub repository.')}
+          ${field('Coupang PC Worker URL', inp('coupangUrl', s.coupangUrl, 'placeholder="http://localhost:8787"'), 'Coupang accepts only the IP registered in WING, so Coupang calls go to the Worker running on that PC (start-coupang.cmd). Empty = use the Worker above.')}
           <div class="fgrid">${field('Team name', inp('team', s.team))}${field('Your name', inp('member', s.member, 'placeholder="for the audit log"'))}</div>
           <div class="row"><button class="btn" id="save">${icon('check', 12, 3)} Save</button><button class="btn ghost" id="test">${icon('refresh', 12)} Test connection</button></div>
         </div>`)}
@@ -83,7 +84,7 @@ export default {
 
     const saveConn = () => {
       const n = settings();
-      n.workerUrl = $('#workerUrl').value.trim().replace(/\/$/, ''); n.teamToken = $('#teamToken').value.trim(); n.team = $('#team').value.trim() || 'Team 2'; n.member = $('#member').value.trim();
+      n.workerUrl = $('#workerUrl').value.trim().replace(/\/$/, ''); n.teamToken = $('#teamToken').value.trim(); n.coupangUrl = $('#coupangUrl').value.trim().replace(/\/$/, ''); n.team = $('#team').value.trim() || 'Team 2'; n.member = $('#member').value.trim();
       AUTONOMY.forEach(([k]) => (n.autonomy[k] = $('#au_' + k).checked)); n.autonomy.read = n.autonomy.draft = true;
       n.models = { orchestrator: $('#m_orchestrator').value, weekly: $('#m_weekly').value, skill: $('#m_skill').value, check: $('#m_check').value };
       n.autoSyncMinutes = Math.max(5, +$('#autoSync').value || 30);
@@ -91,7 +92,14 @@ export default {
     };
     $('#save').onclick = () => { saveConn(); toast('Saved', 'ok'); rerender(); };
     $$('[id^=au_], [id^=m_]', root).forEach((el) => el.addEventListener('change', () => { saveConn(); toast('Saved', 'ok'); }));
-    $('#test').onclick = (e) => busy(e.currentTarget, async () => { saveConn(); const j = await health(); db.set('health', j); toast('Worker reachable', 'ok'); rerender(); });
+    $('#test').onclick = (e) => busy(e.currentTarget, async () => {
+      saveConn(); const j = await health();
+      if (settings().coupangUrl) {
+        try { const c = await coupangHealth(); j.services.coupang = !!c.services?.coupang; j.coupangPc = 'ok'; }
+        catch { j.services.coupang = false; j.coupangPc = 'off'; toast('Coupang PC Worker is not running (start-coupang.cmd)', 'err'); }
+      }
+      db.set('health', j); toast('Worker reachable', 'ok'); rerender();
+    });
     $('#saveRules').onclick = () => { const n = {}; RULES.forEach(([k, , t]) => (n[k] = t === 'date' ? $('#r_' + k).value : +$('#r_' + k).value)); db.set('rules', n); audit('rules', 'Business rules saved'); toast('Rules saved', 'ok'); };
     $('#resetRules').onclick = () => { db.set('rules', {}); rerender(); };
     $('#exp').onclick = () => download(`mission100-${new Date().toISOString().slice(0, 10)}.json`, exportAll());
