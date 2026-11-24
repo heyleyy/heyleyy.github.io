@@ -23,20 +23,35 @@ const demo = () => !isLive() && db.get('demo', false);
 export const health = () => call('/health');
 
 // ---------- Claude ----------
-export const claude = (params) => call('/claude', { method: 'POST', body: params });
-/** Ask for structured JSON by forcing a single tool call. Returns the tool input object. */
-export async function claudeJSON({ model, system, prompt, schema, name = 'emit', max_tokens = 4000 }) {
-  const res = await claude({
-    model: model || settings().models.skill, max_tokens,
-    system: system ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : undefined,
-    messages: [{ role: 'user', content: prompt }],
-    tools: [{ name, description: 'Return the result in this exact structure.', input_schema: schema }],
-    tool_choice: { type: 'tool', name },
-  });
-  const block = res.content.find((b) => b.type === 'tool_use');
-  if (!block) throw new ApiError('The model did not return structured output');
-  if (res.stop_reason === 'max_tokens') throw new ApiError('The answer was cut off (max_tokens). Try a shorter request.');
-  return block.input;
+/** Calls the model through the Worker (POSTECH GenAI or Anthropic) and records POSTECH credit usage. */
+export async function claude(params) {
+  const res = await call('/claude', { method: 'POST', body: params });
+  if (res._credits) db.set('credits', { ...res._credits, at: new Date().toISOString() });
+  return res;
+}
+/**
+ * Ask for structured JSON. POSTECH GenAI does not support forced tool calls on Opus/Sonnet,
+ * so the schema goes into the prompt, the reply is parsed, and a bad reply is retried once.
+ */
+export async function claudeJSON({ model, system, prompt, schema, max_tokens = 4000 }) {
+  const sys = `${system ? system + '\n\n' : ''}Reply with ONE JSON object only (no markdown, no text before or after) that matches this JSON Schema:\n${JSON.stringify(schema)}`;
+  const messages = [{ role: 'user', content: prompt }];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await claude({ model: model || settings().models.skill, max_tokens, system: sys, messages });
+    if (res.stop_reason === 'max_tokens') throw new ApiError('The answer was cut off (max_tokens). Try a shorter request.');
+    const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+    const obj = parseJSON(text);
+    const missing = obj && (schema.required || []).filter((k) => !(k in obj));
+    if (obj && !missing.length) return obj;
+    messages.push({ role: 'assistant', content: text || '(empty)' }, { role: 'user', content: obj ? `Missing keys: ${missing.join(', ')}. Reply again with the full JSON object only.` : 'That was not valid JSON. Reply again with the JSON object only.' });
+  }
+  throw new ApiError('The model did not return valid JSON. Try again.');
+}
+function parseJSON(t) {
+  const s = String(t).replace(/```(?:json)?/gi, '');
+  const a = s.indexOf('{'), b = s.lastIndexOf('}');
+  if (a < 0 || b <= a) return null;
+  try { return JSON.parse(s.slice(a, b + 1)); } catch { return null; }
 }
 
 // ---------- Gemini images ----------

@@ -7,7 +7,7 @@ const listeners = new Set();
 
 export const DEFAULT_SETTINGS = {
   workerUrl: '', teamToken: '', team: 'Team 2', member: '',
-  models: { orchestrator: 'claude-opus-5-5', skill: 'claude-sonnet-5-5', check: 'claude-haiku-5-5' },
+  models: { orchestrator: 'claude-sonnet-5-5', weekly: 'claude-opus-5-5', skill: 'claude-sonnet-5-5', check: 'claude-haiku-5-5' },
   autonomy: { read: true, draft: true, pauseLoser: true, priceChange: false, coupon: false, publish: false, orderAck: false },
   autoSyncMinutes: 30,
 };

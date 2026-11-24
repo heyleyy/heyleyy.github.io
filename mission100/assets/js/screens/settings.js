@@ -5,7 +5,7 @@ import { loadDemo } from '../demo.js';
 import { rerender } from '../app.js';
 
 const SERVICES = [
-  ['claude', 'Claude API', 'Copilot, weekly judgment, copywriting', 'ANTHROPIC_API_KEY'],
+  ['claude', 'Claude via POSTECH GenAI', 'Copilot, weekly judgment, copywriting', 'POSTECH_API_KEYS (or ANTHROPIC_API_KEY)'],
   ['gemini', 'Gemini image', 'Ad images from product photos', 'GEMINI_API_KEY'],
   ['coupang', 'Coupang WING Open API', 'Products, prices, orders, tracking', 'COUPANG_ACCESS_KEY · COUPANG_SECRET_KEY · COUPANG_VENDOR_ID'],
   ['naverAds', 'Naver Search Ad', 'Keyword volume and competition', 'NAVER_AD_API_KEY · NAVER_AD_SECRET · NAVER_AD_CUSTOMER_ID'],
@@ -25,6 +25,21 @@ const RULES = [
   ['minDaysBetweenPriceChanges', 'Days between price changes', 'number'], ['elasticity', 'Price elasticity (demand model)', 'number'], ['iwBonus', 'Item Winner order bonus', 'number'],
   ['defaultCvr', 'Expected conversion rate', 'number'], ['pauseClicks', 'Pause after N clicks, 0 orders', 'number'], ['minStock', 'Low-stock alert', 'number'], ['pauseStock', 'Pause ads at stock', 'number'],
 ];
+
+/** Weekly POSTECH credit use: from the last AI reply, plus every key's state from /health. */
+function creditMeter(h) {
+  const last = db.get('credits', null);
+  const keys = h?.ai?.provider === 'postech' ? (h.ai.credits || []) : [];
+  const rows = keys.length ? keys.map((c, i) => [i + 1, c]) : last ? [[last.key, last]] : [];
+  if (h?.ai && h.ai.provider !== 'postech') return `<p class="note">AI provider: <b>${esc(h.ai.provider)}</b>. Set <code>POSTECH_API_KEYS</code> on the Worker to use POSTECH credits.</p>`;
+  if (!rows.length) return `<p class="note">POSTECH credit use appears here after the first AI reply${h?.ai?.keys ? ` (${h.ai.keys} key(s) on the Worker; the next key is used when one runs out)` : ''}.</p>`;
+  return `<div><div class="sub mb">POSTECH weekly credits${h?.ai?.keys ? ` · ${h.ai.keys} key(s), switches automatically` : ''}</div>${rows.map(([k, c]) => {
+    const r = c?.limit ? c.usage / c.limit : null;
+    const color = c?.exhausted || (r ?? 0) >= 0.95 ? 'var(--red)' : (r ?? 0) >= 0.8 ? 'var(--orange, #ED8936)' : 'var(--teal)';
+    return `<div class="row between" style="font-size:12.5px"><span>Key ${k}${c?.exhausted ? ' ' + badge('used up', 'red') : ''}</span><span>${c?.limit ? `${Math.round(c.usage).toLocaleString()} / ${Math.round(c.limit).toLocaleString()}` : 'not used yet'}</span></div>
+      <div class="bar mb"><i style="width:${Math.min(100, (r || 0) * 100)}%;background:${color}"></i></div>`;
+  }).join('')}${last ? `<p class="note">Last reply used key ${last.key} · ${ago(last.at)}</p>` : ''}</div>`;
+}
 
 export default {
   async render(root) {
@@ -46,8 +61,10 @@ export default {
     <div class="grid g2">
       ${card('Autonomy switches', 'What the agent may do without a person clicking Approve', `<div class="stack">${AUTONOMY.map(([k, l, fixed]) => `<div class="row between">${sw('au_' + k, l, s.autonomy[k])}${fixed ? badge('always on', 'soft') : ''}</div>`).join('')}</div>
         <p class="note mt">Recommended: keep price, coupon, publishing and order confirmation off. Coupang Ads has no public API, so keyword changes become a checklist either way.</p>`)}
-      ${card('AI models', 'Claude model per role (cost estimate in the design plan §14)', `<div class="stack">
-        ${field('Orchestrator (Copilot, weekly judgment)', sel('m_orchestrator', ['claude-opus-5-5', 'claude-sonnet-5-5'], s.models.orchestrator))}
+      ${card('AI models', 'Claude model per role · runs on POSTECH GenAI weekly credits (Opus uses about 2× the credits of Sonnet)', `<div class="stack">
+        ${creditMeter(h)}
+        ${field('Copilot chat', sel('m_orchestrator', ['claude-sonnet-5-5', 'claude-opus-5-5'], s.models.orchestrator))}
+        ${field('Weekly Comprehensive Marketing Judgment', sel('m_weekly', ['claude-opus-5-5', 'claude-sonnet-5-5'], s.models.weekly))}
         ${field('Skills (titles, detail pages, captions, prompts)', sel('m_skill', ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5'], s.models.skill))}
         ${field('Checks (compliance, matching)', sel('m_check', ['claude-haiku-5-5', 'claude-sonnet-5-5'], s.models.check))}
         ${field('Auto-sync orders every (minutes)', inp('autoSync', s.autoSyncMinutes, 'type="number" min="5"'))}</div>`)}
@@ -68,7 +85,7 @@ export default {
       const n = settings();
       n.workerUrl = $('#workerUrl').value.trim().replace(/\/$/, ''); n.teamToken = $('#teamToken').value.trim(); n.team = $('#team').value.trim() || 'Team 2'; n.member = $('#member').value.trim();
       AUTONOMY.forEach(([k]) => (n.autonomy[k] = $('#au_' + k).checked)); n.autonomy.read = n.autonomy.draft = true;
-      n.models = { orchestrator: $('#m_orchestrator').value, skill: $('#m_skill').value, check: $('#m_check').value };
+      n.models = { orchestrator: $('#m_orchestrator').value, weekly: $('#m_weekly').value, skill: $('#m_skill').value, check: $('#m_check').value };
       n.autoSyncMinutes = Math.max(5, +$('#autoSync').value || 30);
       db.set('settings', n); audit('settings', 'Connection / autonomy saved');
     };

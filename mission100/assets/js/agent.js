@@ -126,12 +126,12 @@ export const WEEKLY_PROMPT = 'Write this week\'s Comprehensive Marketing Judgmen
 export async function runAgent(history, userText, onEvent) {
   history.push({ role: 'user', content: userText });
   const s = settings();
-  for (let step = 0; step < 14; step++) {
-    const res = await claude({
-      model: s.models.orchestrator, max_tokens: 8000, thinking: { type: 'adaptive' },
-      system: [{ type: 'text', text: systemPrompt(), cache_control: { type: 'ephemeral' } }],
-      tools: TOOLS, messages: history,
-    });
+  // Opus only for the weekly judgment; Sonnet for everyday chat (saves POSTECH credits).
+  const model = userText === WEEKLY_PROMPT ? s.models.weekly : s.models.orchestrator;
+  const system = systemPrompt();
+  for (let step = 0; step < 10; step++) {
+    // POSTECH GenAI has no prompt caching or adaptive thinking, so the request stays plain.
+    const res = await claude({ model, max_tokens: 6000, system, tools: TOOLS, messages: history });
     history.push({ role: 'assistant', content: res.content });
     for (const b of res.content) if (b.type === 'text' && b.text.trim()) onEvent({ type: 'text', text: b.text });
     if (res.stop_reason === 'max_tokens') { onEvent({ type: 'error', text: 'The answer hit the length limit.' }); break; }
@@ -146,7 +146,7 @@ export async function runAgent(history, userText, onEvent) {
       } catch (e) { out = { error: e.message }; isErr = true; }
       audit('tool', b.name, { input: b.input });
       onEvent({ type: 'result', name: b.name, output: out });
-      results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(out).slice(0, 20000), is_error: isErr || undefined });
+      results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(out).slice(0, 8000), is_error: isErr || undefined });
     }
     history.push({ role: 'user', content: results });
   }
